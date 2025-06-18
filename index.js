@@ -9,17 +9,26 @@ const PORT = 3000;
 // Add this line to handle proxied requests
 app.set("trust proxy", true);
 
-// Configure CORS properly
+// Configure CORS properly - MUST be before any other middleware
 app.use(cors({
     origin: true, // This allows any origin but reflects the request origin
     credentials: true,
     methods: ['GET', 'POST', 'OPTIONS'],
-    allowedHeaders: ['Content-Type', 'Authorization'],
+    allowedHeaders: ['Content-Type', 'Authorization', 'Accept'],
     maxAge: 86400 // 24 hours
 }));
 
 // Add explicit OPTIONS handling for preflight requests
 app.options('*', cors());
+
+// Handle OPTIONS method explicitly for /generateLink
+app.options('/generateLink', (req, res) => {
+  res.header('Access-Control-Allow-Origin', req.headers.origin || '*');
+  res.header('Access-Control-Allow-Methods', 'GET,POST,OPTIONS');
+  res.header('Access-Control-Allow-Headers', 'Content-Type,Authorization,Accept');
+  res.header('Access-Control-Allow-Credentials', 'true');
+  res.status(200).end();
+});
 
 // Store valid codes in memory: { [codeString]: true }
 const IPINFO_TOKEN = "7021f1174d85bb"; // Get from ipinfo.io
@@ -61,7 +70,13 @@ const ipinfoCheck = async (req, res, next) => {
 /**
  * 1) /generateLink => returns { code: "<random>" }
  */
-app.get("/generateLink", ipinfoCheck, (req, res) => {
+app.get("/generateLink", (req, res, next) => {
+  // Skip ipinfo check for OPTIONS
+  if (req.method === 'OPTIONS') {
+    return next();
+  }
+  ipinfoCheck(req, res, next);
+}, (req, res) => {
   const code = crypto.randomBytes(8).toString("hex");
   activeCodes[code] = true;
   
